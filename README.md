@@ -408,41 +408,82 @@ const gen = factory.getBarcodeGenerator();
 
 ### Configuration
 
+Two certificate formats are supported. Pick whichever fits your workflow.
+
+#### Option 1 — `.p12` file (recommended, no conversion needed)
+
+The `.p12` bundle already contains both the signing certificate and the private key. Only the WWDR certificate must be provided separately.
+
 ```typescript
 factory.registerProvider(WalletProvider.APPLE, {
-  // Certificate — provide file paths OR raw data (Buffer/string)
-  certPath: './certs/pass.pem',       // or certData: Buffer | string
-  keyPath: './certs/pass.key',        // or keyData: Buffer | string
-  keyPassphrase: 'optional-password',
-  wwdrPath: './certs/wwdr.pem',       // Apple WWDR cert (or wwdrData)
+  // .p12 bundle — provide a file path OR a raw Buffer
+  p12Path: './certs/pass.p12',
+  p12Passphrase: 'your-export-password',   // the password set when exporting
 
-  teamIdentifier: 'ABCDE12345',       // Apple Team ID
+  // WWDR is NOT inside the .p12 — always supply it separately
+  wwdrPath: './certs/wwdr.pem',            // or wwdrData: Buffer | string
+
+  teamIdentifier: 'ABCDE12345',
   passTypeIdentifier: 'pass.com.example.myapp',
+});
+```
 
-  // Optional: for push update notifications
-  webServiceURL: 'https://myapp.com/wallet',
-  authenticationToken: 'my-auth-token-32chars+',
+Pass raw bytes instead of a file path (useful when loading from secrets manager):
+
+```typescript
+factory.registerProvider(WalletProvider.APPLE, {
+  p12Data: fs.readFileSync('./certs/pass.p12'),   // Buffer
+  p12Passphrase: process.env.P12_PASSPHRASE,
+  wwdrData: fs.readFileSync('./certs/wwdr.pem'),
+
+  teamIdentifier: process.env.APPLE_TEAM_ID!,
+  passTypeIdentifier: process.env.PASS_TYPE_ID!,
+});
+```
+
+#### Option 2 — separate PEM files
+
+```typescript
+factory.registerProvider(WalletProvider.APPLE, {
+  certPath: './certs/pass.pem',        // or certData: Buffer | string
+  keyPath: './certs/pass.key',         // or keyData: Buffer | string
+  keyPassphrase: 'optional-password',  // only if the key is encrypted
+  wwdrPath: './certs/wwdr.pem',        // or wwdrData: Buffer | string
+
+  teamIdentifier: 'ABCDE12345',
+  passTypeIdentifier: 'pass.com.example.myapp',
 });
 ```
 
 ### Getting your certificates
 
 1. In Xcode / Apple Developer portal, create a **Pass Type ID** (`pass.com.yourapp.something`)
-2. Generate a **Pass Certificate** and export as `.p12`
-3. Extract PEM files:
-   ```bash
-   # Extract certificate
-   openssl pkcs12 -in pass.p12 -clcerts -nokeys -out pass.pem
+2. Generate a **Pass Certificate**, download it, and double-click to add it to Keychain Access
+3. In Keychain Access, find the certificate under *My Certificates*, right-click → **Export** → save as `.p12`; set an export password
 
-   # Extract private key
-   openssl pkcs12 -in pass.p12 -nocerts -nodes -out pass.key
+That `.p12` file is all you need for Option 1 above.
 
-   # Download WWDR from Apple:
-   # https://www.apple.com/certificateauthority/
-   # Apple Worldwide Developer Relations — G4 (or current)
-   curl -o wwdr.pem https://www.apple.com/certificateauthority/AppleWWDRCAG4.cer
-   openssl x509 -inform DER -in wwdr.pem -out wwdr.pem
-   ```
+**Download the WWDR certificate** (required for both options):
+
+```bash
+# Apple WWDR G4 — check https://www.apple.com/certificateauthority/ for the latest
+curl -o wwdr.cer https://www.apple.com/certificateauthority/AppleWWDRCAG4.cer
+
+# Convert DER → PEM
+openssl x509 -inform DER -in wwdr.cer -out wwdr.pem
+```
+
+**If you need PEM files instead (Option 2)**, extract them from the `.p12`:
+
+```bash
+# Extract signing certificate
+openssl pkcs12 -in pass.p12 -clcerts -nokeys -out pass.pem -legacy
+
+# Extract private key (unencrypted)
+openssl pkcs12 -in pass.p12 -nocerts -nodes -out pass.key -legacy
+```
+
+> **Note:** OpenSSL 3+ requires the `-legacy` flag for `.p12` files exported from Keychain Access. Omit it if you're on OpenSSL 1.x.
 
 ### Creating a pass
 

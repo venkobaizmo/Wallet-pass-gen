@@ -32,24 +32,19 @@ export class AppleWalletProvider extends BaseWalletPassProvider {
     if (this.certStore) return this.certStore;
 
     try {
-      const certPem = await this.loadPem(this.config.certData, this.config.certPath, 'certificate');
-      const keyPem = await this.loadPem(this.config.keyData, this.config.keyPath, 'private key');
       const wwdrPem = await this.loadPem(this.config.wwdrData, this.config.wwdrPath, 'WWDR certificate');
-
-      const cert = forge.pki.certificateFromPem(certPem);
-      const rawKey = this.config.keyPassphrase
-        ? forge.pki.decryptRsaPrivateKey(keyPem, this.config.keyPassphrase)
-        : (forge.pki.privateKeyFromPem(keyPem) as forge.pki.rsa.PrivateKey);
-
-      if (!rawKey) {
-        throw new AuthenticationError(
-          'Failed to parse private key — check passphrase',
-        );
-      }
-
       const wwdr = forge.pki.certificateFromPem(wwdrPem);
 
-      this.certStore = { cert, key: rawKey, wwdr };
+      let cert: forge.pki.Certificate;
+      let key: forge.pki.rsa.PrivateKey;
+
+      if (this.config.p12Path || this.config.p12Data) {
+        ({ cert, key } = this.loadFromP12(wwdr));
+      } else {
+        ({ cert, key } = await this.loadFromPem());
+      }
+
+      this.certStore = { cert, key, wwdr };
       logger.debug('Apple certificates loaded successfully');
       return this.certStore;
     } catch (err) {
@@ -59,6 +54,72 @@ export class AppleWalletProvider extends BaseWalletPassProvider {
         err,
       );
     }
+  }
+
+  private loadFromP12(wwdr: forge.pki.Certificate): { cert: forge.pki.Certificate; key: forge.pki.rsa.PrivateKey } {
+    const raw = this.config.p12Data
+      ? this.config.p12Data
+      : fs.readFileSync(this.config.p12Path!);
+
+    const p12Der = raw.toString('binary');
+    const p12Asn1 = forge.asn1.fromDer(p12Der);
+    const passphrase = this.config.p12Passphrase ?? '';
+
+    let p12: forge.pkcs12.Pkcs12Pfx;
+    try {
+      p12 = forge.pkcs12.pkcs12FromAsn1(p12Asn1, passphrase);
+    } catch {
+      throw new AuthenticationError(
+        'Failed to parse .p12 file — wrong passphrase or corrupt file',
+      );
+    }
+
+    // Extract the signing certificate (the one that is NOT the WWDR cert)
+    const certBags = p12.getBags({ bagType: forge.pki.oids.certBag })[forge.pki.oids.certBag] ?? [];
+    const signingBag = certBags.find((bag) => {
+      const subject = bag.cert?.subject.getField('CN')?.value as string | undefined;
+      return subject && !subject.toLowerCase().includes('apple worldwide');
+    });
+
+    if (!signingBag?.cert) {
+      throw new AuthenticationError(
+        'No signing certificate found in .p12 — make sure you exported the Pass Certificate, not just the WWDR',
+      );
+    }
+
+    // Extract the private key (either pkcs8ShroudedKeyBag or keyBag)
+    const keyBags =
+      p12.getBags({ bagType: forge.pki.oids.pkcs8ShroudedKeyBag })[forge.pki.oids.pkcs8ShroudedKeyBag] ??
+      p12.getBags({ bagType: forge.pki.oids.keyBag })[forge.pki.oids.keyBag] ??
+      [];
+
+    if (!keyBags.length || !keyBags[0].key) {
+      throw new AuthenticationError('No private key found in .p12 file');
+    }
+
+    // Suppress the unused `wwdr` parameter warning — callers still need it
+    void wwdr;
+
+    return {
+      cert: signingBag.cert,
+      key: keyBags[0].key as forge.pki.rsa.PrivateKey,
+    };
+  }
+
+  private async loadFromPem(): Promise<{ cert: forge.pki.Certificate; key: forge.pki.rsa.PrivateKey }> {
+    const certPem = await this.loadPem(this.config.certData, this.config.certPath, 'certificate');
+    const keyPem = await this.loadPem(this.config.keyData, this.config.keyPath, 'private key');
+
+    const cert = forge.pki.certificateFromPem(certPem);
+    const key = this.config.keyPassphrase
+      ? forge.pki.decryptRsaPrivateKey(keyPem, this.config.keyPassphrase)
+      : (forge.pki.privateKeyFromPem(keyPem) as forge.pki.rsa.PrivateKey);
+
+    if (!key) {
+      throw new AuthenticationError('Failed to parse private key — check keyPassphrase');
+    }
+
+    return { cert, key };
   }
 
   private async loadPem(
@@ -72,7 +133,9 @@ export class AppleWalletProvider extends BaseWalletPassProvider {
     if (filePath) {
       return fs.readFileSync(filePath, 'utf8');
     }
-    throw new AuthenticationError(`No ${label} provided (set certData/certPath, keyData/keyPath, wwdrData/wwdrPath)`);
+    throw new AuthenticationError(
+      `No ${label} provided — set ${label === 'WWDR certificate' ? 'wwdrPath/wwdrData' : 'certPath/certData or keyPath/keyData'}`,
+    );
   }
 
   // ─── Manifest & signing ────────────────────────────────────────────────────
