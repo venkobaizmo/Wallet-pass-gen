@@ -25,6 +25,71 @@ Peer requirement: Node.js ≥ 18.
 
 ---
 
+## Local Development / Linking
+
+Use this if you are working on `wallet-pass-gen` itself and want to consume it from another local project without publishing to npm.
+
+### Step 1 — Build and register the module globally
+
+```bash
+# Inside the wallet-pass-gen directory
+npm install       # install dependencies
+npm run build     # compile TypeScript → dist/
+npm link          # registers the package in the global npm symlink store
+```
+
+### Step 2 — Link into your consuming project
+
+```bash
+# Inside your other project's directory
+npm link wallet-pass-gen
+```
+
+Your project will now resolve `import ... from 'wallet-pass-gen'` to the local `dist/` folder. Any time you change source files, re-run `npm run build` in the module directory to pick up the changes.
+
+### Alternative — install by path (no global link)
+
+If you prefer not to use `npm link`, install the package directly from its local path:
+
+```bash
+# Inside your consuming project
+npm install /absolute/path/to/wallet-pass-gen
+```
+
+Or with a relative path:
+
+```bash
+npm install ../wallet-pass-gen
+```
+
+This copies the built package into `node_modules`. Re-run the install command after each rebuild to refresh it.
+
+### Alternative — use `package.json` `file:` reference
+
+Add the dependency directly in your consuming project's `package.json`:
+
+```json
+{
+  "dependencies": {
+    "wallet-pass-gen": "file:../wallet-pass-gen"
+  }
+}
+```
+
+Then run `npm install`. With a `file:` reference, npm installs a symlink so changes in `dist/` are reflected immediately after a rebuild (same behaviour as `npm link`, but scoped to one project).
+
+### Unlinking
+
+```bash
+# In the consuming project
+npm unlink wallet-pass-gen
+
+# In the wallet-pass-gen directory (removes the global registration)
+npm unlink
+```
+
+---
+
 ## Quick Start
 
 ```typescript
