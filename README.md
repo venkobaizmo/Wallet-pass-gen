@@ -90,6 +90,122 @@ npm unlink
 
 ---
 
+## CI/CD and Release
+
+Two GitHub Actions workflows are included in `.github/workflows/`.
+
+### `ci.yml` — runs on every push and pull request
+
+Tests the build across Node 18, 20, and 22 automatically. No secrets needed.
+
+```
+push / PR  →  npm ci  →  npm run build  →  npm test:coverage
+```
+
+### `release.yml` — publishes to npm on a version tag
+
+**One-time setup:**
+
+1. Create an npm account and generate an **Automation token** at [npmjs.com](https://www.npmjs.com/settings/~/tokens).
+2. Add it to your GitHub repository secrets as `NPM_TOKEN`
+   (`Settings → Secrets and variables → Actions → New repository secret`).
+
+**To cut a release:**
+
+```bash
+# Bump version (choose patch / minor / major)
+npm version patch   # 1.0.0 → 1.0.1
+npm version minor   # 1.0.0 → 1.1.0
+npm version major   # 1.0.0 → 2.0.0
+
+# Push the commit and the tag that npm version created
+git push && git push --tags
+```
+
+GitHub Actions picks up the tag, runs the full test suite, publishes to npm with provenance, and creates a GitHub Release with auto-generated release notes.
+
+**Pre-release / beta:**
+
+```bash
+npm version prerelease --preid=beta   # → 1.0.1-beta.0
+git push && git push --tags
+# Published as: npm install wallet-pass-gen@beta
+```
+
+---
+
+### Using this module in your application's CI/CD
+
+#### Scenario A — published on npm (most common)
+
+Your app's `package.json` lists `"wallet-pass-gen": "^1.0.0"`. Nothing extra is needed — `npm ci` in your app's pipeline installs it like any other package.
+
+```yaml
+# .github/workflows/app-ci.yml  (in your application repo)
+steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-node@v4
+    with:
+      node-version: 20.x
+      cache: npm
+  - run: npm ci          # installs wallet-pass-gen from npm registry
+  - run: npm run build
+  - run: npm test
+```
+
+#### Scenario B — monorepo (library and app in the same repo)
+
+Add `"wallet-pass-gen": "file:../wallet-pass-gen"` to your app's `package.json`, then build the library before the app:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - uses: actions/setup-node@v4
+    with: { node-version: 20.x, cache: npm }
+
+  # 1. Build the library
+  - run: npm ci && npm run build
+    working-directory: ./wallet-pass-gen
+
+  # 2. Build the app (file: reference resolves to the built dist/)
+  - run: npm ci && npm run build && npm test
+    working-directory: ./my-app
+```
+
+#### Scenario C — private GitHub Packages registry
+
+Publish to GitHub Packages instead of npm by pointing the `registry-url` at `https://npm.pkg.github.com` and scoping the package name:
+
+1. In `package.json`, rename to `"name": "@venkobaizmo/wallet-pass-gen"`.
+2. Add `.npmrc` to the module root:
+   ```
+   @venkobaizmo:registry=https://npm.pkg.github.com
+   ```
+3. In `release.yml`, change the publish step to:
+   ```yaml
+   - uses: actions/setup-node@v4
+     with:
+       registry-url: https://npm.pkg.github.com
+       scope: "@venkobaizmo"
+   - run: npm publish
+     env:
+       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+   ```
+4. In your consuming app's pipeline, authenticate with `GITHUB_TOKEN`:
+   ```yaml
+   - uses: actions/setup-node@v4
+     with:
+       registry-url: https://npm.pkg.github.com
+       scope: "@venkobaizmo"
+   - run: npm ci
+     env:
+       NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+   ```
+
+A complete example workflow for consuming applications is provided in `.github/workflows/consuming-app-example.yml`.
+
+---
+
 ## Quick Start
 
 ```typescript

@@ -1,0 +1,102 @@
+# Example CI/CD workflow for an APPLICATION that depends on wallet-pass-gen.
+# Copy this file into your application repository and adapt as needed.
+#
+# Covers two scenarios:
+#   A) App uses the published npm version   → just `npm ci` picks it up
+#   B) App uses this repo as a local module → build wallet-pass-gen first
+
+name: App CI/CD (example)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# ─── Scenario A: wallet-pass-gen is published on npm ─────────────────────────
+# Nothing special is needed. `npm ci` installs it like any other package.
+jobs:
+  build-app-with-published-module:
+    name: Build app (published npm module)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      - run: npm ci        # installs wallet-pass-gen from registry
+      - run: npm run build
+      - run: npm test
+
+
+# ─── Scenario B: wallet-pass-gen lives in the same monorepo ──────────────────
+# Build the library first, then build the app that depends on it.
+  build-app-with-local-module:
+    name: Build app (local module — monorepo)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+
+      # 1. Build the library
+      - name: Install library dependencies
+        run: npm ci
+        working-directory: ./wallet-pass-gen   # path to the module inside monorepo
+
+      - name: Build library
+        run: npm run build
+        working-directory: ./wallet-pass-gen
+
+      # 2. Install and build the app (package.json uses "file:../wallet-pass-gen")
+      - name: Install app dependencies
+        run: npm ci
+        working-directory: ./my-app
+
+      - name: Build app
+        run: npm run build
+        working-directory: ./my-app
+
+      - name: Test app
+        run: npm test
+        working-directory: ./my-app
+
+
+# ─── Scenario C: wallet-pass-gen is in a separate private repo ───────────────
+# Reference it via a GitHub package registry or a git dependency in package.json.
+#
+# In your app's package.json:
+#   "wallet-pass-gen": "github:venkobaizmo/wallet-pass-gen#v1.0.0"
+# or via GitHub Packages (scoped):
+#   "@venkobaizmo/wallet-pass-gen": "^1.0.0"
+#
+# Then set up npm to use the GitHub registry:
+  build-app-with-github-packages:
+    name: Build app (GitHub Packages)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+          cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: "@venkobaizmo"
+
+      - name: Install dependencies
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - run: npm run build
+      - run: npm test
